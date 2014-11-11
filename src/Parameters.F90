@@ -14,7 +14,7 @@
 !
 ! Copyright (C) 2014 by Matthew Clay <mpclay@gmail.com>
 !
-!> @file Simple1D.F90
+!> @file Parameters.F90
 !> @author Matthew Clay
 !> @brief Working parameters for the fortran enviornment.
 MODULE Parameters_m
