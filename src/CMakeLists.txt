@@ -24,3 +24,9 @@ SET(CORE_SOURCE_FILES
 SET(MUSCL_SOURCE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/MUSCL.F90
     CACHE INTERNAL "MUSCL program source file.")
+
+# Source files for the FD upwind code.
+SET(FDUPWIND_SOURCE_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/FDUpwind.F90
+    CACHE INTERNAL "Upwind finite difference code.")
+
