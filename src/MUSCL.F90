@@ -17,11 +17,16 @@
 !> @file MUSCL.F90
 !> @author Matthew Clay
 !> @brief Solve the Burgers' equation using the MUSCL scheme.
+!!
+!! In the finite volume scheme, MUSCL is used to reconstruct the primitives at
+!! the cell faces. A Lax-Friedrichs flux function is used to evaluate the
+!! numerical flux. Time integration is performed with the 3rd order TVD RK3
+!! scheme of Shu.
 PROGRAM MUSCL_p
 
    ! Required modules.
    USE Parameters_m,ONLY: RWP, IWP, PI
-   USE Flux_m,ONLY: MINMOD, MONOTONIZED_CENTRAL, SUPERBEE, SetLimiter, Flux
+   USE Flux_m,ONLY: MINMOD, UPWIND, SetLimiter, Flux
 
    IMPLICIT NONE
 
@@ -32,13 +37,13 @@ PROGRAM MUSCL_p
    !> Number of finite volume cells.
    INTEGER(KIND=IWP),PARAMETER :: n = 4096_IWP
    !> CFL for time integration.
-   REAL(KIND=RWP),PARAMETER :: cfl = 0.1_RWP
+   REAL(KIND=RWP),PARAMETER :: cfl = 0.5_RWP
    !> End time for the simulation.
    REAL(KIND=RWP),PARAMETER :: tend = 1.0_RWP
    !> Time frequency with which to write data files.
-   REAL(KIND=RWP),PARAMETER :: writePeriod = 0.05_RWP
+   REAL(KIND=RWP),PARAMETER :: writePeriod = 0.01_RWP
    !> Time frequency with which to print information to the user.
-   REAL(KIND=RWP),PARAMETER :: printPeriod = 0.05_RWP
+   REAL(KIND=RWP),PARAMETER :: printPeriod = 0.01_RWP
    !> Which limiter to use.
    INTEGER(KIND=IWP),PARAMETER :: limiter = MINMOD
 
@@ -54,10 +59,8 @@ PROGRAM MUSCL_p
    !> Solution array at the start and end of the time step. We include 1 ghost
    !! layer for the second order scheme.
    REAL(KIND=RWP),DIMENSION(0:n+1) :: u0
-   !> Solution array for the first intermediate step during time integration.
-   REAL(KIND=RWP),DIMENSION(0:n+1) :: u1
-   !> Solution array for the second intermediate step during time integration.
-   REAL(KIND=RWP),DIMENSION(1:n) :: u2
+   !> Solution array for the intermediate stages.
+   REAL(KIND=RWP),DIMENSION(0:n+1) :: ui
    !> Array for the RHS of the ODE system.
    REAL(KIND=RWP),DIMENSION(1:n) :: Lu
    !> Time step.
@@ -124,7 +127,6 @@ PROGRAM MUSCL_p
    WRITE(*,120) 'Initial mass:', mass
    WRITE(*,100) ''
    100 FORMAT (A)
-   110 FORMAT (A,T17,A)
    120 FORMAT (A,T16,ES15.8)
    130 FORMAT (A,T17,I10.10)
 
@@ -138,20 +140,28 @@ PROGRAM MUSCL_p
       ! Calculate the RHS with the data at the start of the time step.
       CALL Flux(n, u0, dx, Lu)
       !
-      ! Determine the intermediate Euler stage.
-      u1(1:n) = u0(1:n) + dt*Lu(1:n)
+      ! Determine the first intermediate RK stage.
+      ui(1:n) = u0(1:n) + dt*Lu(1:n)
 
       ! Fill the boundary conditions.
-      CALL BoundaryConditions(n, u1)
+      CALL BoundaryConditions(n, ui)
       !
       ! Calculate the RHS using the intermediate stage.
-      CALL Flux(n, u1, dx, Lu)
+      CALL Flux(n, ui, dx, Lu)
       !
-      ! Determine the next intermediate solution.
-      u2(1:n) = u1(1:n) + dt*Lu(1:n)
+      ! Determine the second intermediate RK stage.
+      ui(1:n) = 0.75_RWP*u0(1:n) + 0.25_RWP*ui(1:n) + dt*0.25_RWP*Lu(1:n)
 
-      ! Average the two intermediate stages to get the next solution.
-      u0(1:n) = 0.5_RWP*(u1(1:n) + u2(1:n))
+      ! Fill in the boundary conditions.
+      CALL BoundaryConditions(n, ui)
+      !
+      ! Calculate the RHS using the intermediate stage.
+      CALL Flux(n, ui, dx, Lu)
+      !
+      ! Determine u at the next time step.
+      u0(1:n) = u0(1:n)/3.0_RWP + &
+                2.0_RWP*ui(1:n)/3.0_RWP + &
+                dt*2.0_RWP*Lu(1:n)/3.0_RWP
 
       ! Increment the time and step counters.
       t = t + dt

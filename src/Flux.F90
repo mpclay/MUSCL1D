@@ -17,6 +17,13 @@
 !> @file Flux.F90
 !> @author Matthew Clay
 !> @brief Calculate the RHS of the finite volume scheme.
+!!
+!! MUSCL is used to reconstruct the primitives at the cell faces. A Lax-
+!! Friedrichs flux function is used to evaluate the numerical flux. The
+!! module has the following limiters available:
+!!
+!!    1. Minmod
+!!    2. Upwind (Godunov)
 MODULE Flux_m
 
    ! Required modules.
@@ -28,17 +35,15 @@ MODULE Flux_m
    !
    !> Minmod limiter.
    INTEGER(KIND=IWP),PARAMETER,PUBLIC :: MINMOD = 0_IWP
-   !> Monotonized central limiter.
-   INTEGER(KIND=IWP),PARAMETER,PUBLIC :: MONOTONIZED_CENTRAL = 1_IWP
-   !> Superbee limiter.
-   INTEGER(KIND=IWP),PARAMETER,PUBLIC :: SUPERBEE = 2_IWP
+   !> Upwind limiter.
+   INTEGER(KIND=IWP),PARAMETER,PUBLIC :: UPWIND = 1_IWP
 
    !> Which limiter is used during the simulation.
    INTEGER(KIND=IWP),PRIVATE :: limiter
 
    ! Module procedures.
    PUBLIC :: SetLimiter, Flux
-   PRIVATE :: MinModLimiter, MonotonizedCentralLimiter, SuperbeeLimiter
+   PRIVATE :: MinModLimiter, UpwindLimiter
 
 CONTAINS
 
@@ -54,10 +59,8 @@ CONTAINS
       SELECT CASE (limiter_)
          CASE (MINMOD)
             limiter = MINMOD
-         CASE (MONOTONIZED_CENTRAL)
-            limiter = MONOTONIZED_CENTRAL
-         CASE (SUPERBEE)
-            limiter = SUPERBEE
+         CASE (UPWIND)
+            limiter = UPWIND
          CASE DEFAULT
             WRITE(*,100) 'Invalid limiter. Halting.'
             STOP
@@ -96,39 +99,35 @@ CONTAINS
       REAL(KIND=RWP),DIMENSION(0:n) :: fR
       ! Upwinded flux.
       REAL(KIND=RWP),DIMENSION(0:n) :: fU
-      ! The divided differences for each cell.
-      REAL(KIND=RWP),DIMENSION(1:n) :: r
-      ! Value of the slope-limiter function for each cell.
-      REAL(KIND=RWP),DIMENSION(1:n) :: phi
+      ! The slope to use for each cell.
+      REAL(KIND=RWP),DIMENSION(1:n) :: s
       ! Maximum wavespeed in the domain, which is used for the LF flux.
       REAL(KIND=RWP) :: alpha
       ! Looping index for cells and faces.
       INTEGER(KIND=IWP) :: i
 
-      ! Calculate the divided differences for each cell.
-      DO i = 1, n
-         r(i) = (u(i) - u(i-1))/(u(i+1) - u(i))
-      END DO
-
-      ! Calculate the limiter function for each cell.
+      ! Calculate the slope for each cell.
       SELECT CASE (limiter)
          CASE (MINMOD)
-            CALL MinModLimiter(n, r, phi)
-         CASE (MONOTONIZED_CENTRAL)
-            CALL MonotonizedCentralLimiter(n, r, phi)
-         CASE (SUPERBEE)
-            CALL SuperbeeLimiter(n, r, phi)
+            CALL MinModLimiter(n, u, s)
+         CASE (UPWIND)
+            CALL UpwindLimiter(n, u, s)
       END SELECT
 
       ! Loop over each cell and form the left and right extrapolated values.
       !
-      ! CELL:          i
-      !          |-----------|
-      ! VALUE: uR(i-1)     uL(i)
+      !                    __/
+      !                 __/
+      !              __/   s (the slope)
+      !           __/
+      !          /
+      ! CELL:           i
+      !          |------------|
+      ! VALUE: uR(i-1)      uL(i)
       !
       DO i = 1, n
-         uR(i-1) = u(i) - 0.5_RWP*phi(i)*(u(i+1) - u(i))
-         uL(i) = u(i) + 0.5_RWP*phi(i)*(u(i+1) - u(i))
+         uR(i-1) = u(i) - 0.5_RWP*s(i)
+         uL(i) = u(i) + 0.5_RWP*s(i)
       END DO
 
       ! Copy the left-extrapolated values at the right of the domain to the left
@@ -165,67 +164,54 @@ CONTAINS
    !> Minmod slope limiter.
    !!
    !> @param[in] n Number of cells in the domain.
-   !> @param[in] r Array of divided differences.
-   !> @param[out] phi Slope limiting function.
-   SUBROUTINE MinModLimiter(n, r, phi)
+   !> @param[in] u Array of solution values.
+   !> @param[out] s Limited slope.
+   SUBROUTINE MinModLimiter(n, u, s)
       IMPLICIT NONE
       ! Calling arguments.
       INTEGER(KIND=IWP),INTENT(IN) :: n
-      REAL(KIND=RWP),DIMENSION(1:n),INTENT(IN) :: r
-      REAL(KIND=RWP),DIMENSION(1:n),INTENT(OUT) :: phi
+      REAL(KIND=RWP),DIMENSION(0:n+1),INTENT(IN) :: u
+      REAL(KIND=RWP),DIMENSION(1:n),INTENT(OUT) :: s
       ! Local variables.
+      ! Slopes to the left and right cells from a given cell i.
+      REAL(KIND=RWP) :: sL, sR
       ! Looping index.
       INTEGER(KIND=IWP) :: i
 
-      ! Loop over each cell to calculate the limiter.
+      ! Loop over each cell to calculate the limited slope.
       DO i = 1, n
-         phi(i) = MAX(0.0_RWP, MIN(1.0_RWP, r(i)))
+         sR = u(i+1) - u(i)
+         sL = u(i) - u(i-1)
+         IF ((sR > 0.0_RWP) .AND. (sL > 0.0_RWP)) THEN
+            s(i) = MIN(sR, sL)
+         ELSE IF ((sR < 0.0_RWP) .AND. (sL < 0.0_RWP)) THEN
+            s(i) = MAX(sR, sL)
+         ELSE
+            s(i) = 0.0_RWP
+         END IF
       END DO
    END SUBROUTINE MinModLimiter
 
-   !> Monotonized-central slope limiter.
+   !> Upwind slope limiter.
    !!
    !> @param[in] n Number of cells in the domain.
-   !> @param[in] r Array of divided differences.
-   !> @param[out] phi Slope limiting function.
-   SUBROUTINE MonotonizedCentralLimiter(n, r, phi)
+   !> @param[in] u Array of solution values.
+   !> @param[out] s Limited slope.
+   SUBROUTINE UpwindLimiter(n, u, s)
       IMPLICIT NONE
       ! Calling arguments.
       INTEGER(KIND=IWP),INTENT(IN) :: n
-      REAL(KIND=RWP),DIMENSION(1:n),INTENT(IN) :: r
-      REAL(KIND=RWP),DIMENSION(1:n),INTENT(OUT) :: phi
+      REAL(KIND=RWP),DIMENSION(0:n+1),INTENT(IN) :: u
+      REAL(KIND=RWP),DIMENSION(1:n),INTENT(OUT) :: s
       ! Local variables.
       ! Looping index.
       INTEGER(KIND=IWP) :: i
 
-      ! Loop over each cell to calculate the limiter.
+      ! Loop over each cell to calculate the limited slope.
       DO i = 1, n
-         phi(i) = MAX(0.0_RWP, MIN(2.0_RWP*r(i), &
-                                   0.5_RWP*(r(i) + 1.0_RWP), &
-                                   2.0_RWP))
+         s(i) = 0.0_RWP
       END DO
-   END SUBROUTINE MonotonizedCentralLimiter
-
-   !> Superbee slope limiter.
-   !!
-   !> @param[in] n Number of cells in the domain.
-   !> @param[in] r Array of divided differences.
-   !> @param[out] phi Slope limiting function.
-   SUBROUTINE SuperbeeLimiter(n, r, phi)
-      IMPLICIT NONE
-      ! Calling arguments.
-      INTEGER(KIND=IWP),INTENT(IN) :: n
-      REAL(KIND=RWP),DIMENSION(1:n),INTENT(IN) :: r
-      REAL(KIND=RWP),DIMENSION(1:n),INTENT(OUT) :: phi
-      ! Local variables.
-      ! Looping index.
-      INTEGER(KIND=IWP) :: i
-
-      ! Loop over each cell to calculate the limiter.
-      DO i = 1, n
-         phi(i) = MAX(0.0_RWP, MIN(2.0_RWP*r(i), 1.0_RWP), MIN(r(i), 2.0_RWP))
-      END DO
-   END SUBROUTINE SuperbeeLimiter
+   END SUBROUTINE UpwindLimiter
 
 END MODULE Flux_m
 
