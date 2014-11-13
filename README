@@ -2,3 +2,39 @@ MUSCL1D
 =======
 
 A 1D code using the MUSCL scheme to solve the Burgers' equation.
+
+Available Programs
+==================
+
+- muscl: solve Burgers' equation with MUSCL reconstruction.
+- fdupwind: solve Burgers' equation with a non-conservative FD scheme.
+
+Required Software
+=================
+
+- You must have cmake version 2.8.9 or higher.
+
+Installation
+============
+
+1. Change to the main source directory:
+    $ cd /path/to/MUSCL1D
+2. Make a build directory and go into it:
+    $ mkdir build
+    $ cd build
+3. Enter the cmake curses GUI and press c to configure cmake:
+    $ ccmake ..
+    $ [in cmake curses gui] c
+4. Toggle which of the programs you would like to build.
+    $ [in cmake curses gui] enter
+5. Enter the installation prefix (note these can run from build just fine):
+    $ [in cmake curses gui] CMAKE_INSTALL_PREFIX=/path/to/installation
+6. Configure your changes in cmake:
+    $ [in cmake curses gui] c
+7. Generate the Makefile and exit cmake curses gui:
+    $ [in cmake curses gui] g
+8. Make the programs.
+    $ make
+9. Install the programs.
+    $ make install
+
